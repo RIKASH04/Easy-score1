@@ -50,6 +50,9 @@ export default function AdminPage() {
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (!session?.user) { router.replace('/'); return; }
             if (session.user.email !== ADMIN_EMAIL) { router.replace('/judge'); return; }
+            // Extra guard: admin access is only allowed via email/password, not Google OAuth
+            const provider = session.user.app_metadata?.provider;
+            if (provider !== 'email') { router.replace('/judge'); return; }
             setUserEmail(session.user.email);
             setAuthReady(true);
         });

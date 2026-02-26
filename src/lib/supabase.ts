@@ -17,4 +17,5 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
 });
 
-export const ADMIN_EMAIL = 'rikashrikash04@gmail.com';
+export const ADMIN_EMAIL = 'rikash04rikash@gmail.com';
+export const ADMIN_PASSWORD = 'admin';

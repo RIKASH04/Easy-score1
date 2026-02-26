@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase, ADMIN_EMAIL } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
 export default function AuthCallbackPage() {
     const router = useRouter();
@@ -24,18 +24,18 @@ export default function AuthCallbackPage() {
         // We just need to wait for the SIGNED_IN event and redirect.
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             (event, session) => {
-                if (event === 'SIGNED_IN' && session?.user?.email) {
-                    const dest = session.user.email === ADMIN_EMAIL ? '/admin' : '/judge';
-                    router.replace(dest);
+                if (event === 'SIGNED_IN' && session?.user) {
+                    // Google OAuth users always go to Judge dashboard
+                    router.replace('/judge');
                 }
             }
         );
 
         // Also handle the case where the session is set before the listener fires
         supabase.auth.getSession().then(({ data: { session } }) => {
-            if (session?.user?.email) {
-                const dest = session.user.email === ADMIN_EMAIL ? '/admin' : '/judge';
-                router.replace(dest);
+            if (session?.user) {
+                // Google OAuth users always go to Judge dashboard
+                router.replace('/judge');
             }
         });
 

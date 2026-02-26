@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, ADMIN_EMAIL } from '@/lib/supabase';
+import { supabase, ADMIN_EMAIL, ADMIN_PASSWORD } from '@/lib/supabase';
 
 export default function AuthPage() {
   const router = useRouter();
@@ -29,6 +29,8 @@ export default function AuthPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Session-based redirect: only used on page load to handle already-logged-in users.
+  // For email/password admin login, the explicit check in handleEmailAuth is used instead.
   const redirectUser = (email: string) =>
     email === ADMIN_EMAIL ? router.replace('/admin') : router.replace('/judge');
 
@@ -44,6 +46,12 @@ export default function AuthPage() {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        // Admin check: only email+password combo grants admin access
+        if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+          router.replace('/admin');
+        } else {
+          router.replace('/judge');
+        }
       }
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Something went wrong.');
