@@ -57,7 +57,7 @@ export default function AuthPage() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/`,
+        redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/` : 'https://easy-score.netlify.app/',
         queryParams: { access_type: 'offline', prompt: 'select_account' },
       },
     });
