@@ -47,10 +47,18 @@ export default function AdminPage() {
     }, []);
 
     useEffect(() => {
+        // Admin login bypasses Supabase — check local session flag set at login
+        const localAdmin = typeof window !== 'undefined' &&
+            sessionStorage.getItem('es-admin-auth') === 'true';
+        if (localAdmin) {
+            setUserEmail(ADMIN_EMAIL);
+            setAuthReady(true);
+            return;
+        }
+        // Fallback: Supabase session (e.g. admin had a Supabase account previously)
         supabase.auth.getSession().then(({ data: { session } }) => {
             if (!session?.user) { router.replace('/'); return; }
             if (session.user.email !== ADMIN_EMAIL) { router.replace('/judge'); return; }
-            // Extra guard: admin access is only allowed via email/password, not Google OAuth
             const provider = session.user.app_metadata?.provider;
             if (provider !== 'email') { router.replace('/judge'); return; }
             setUserEmail(session.user.email);
@@ -146,6 +154,8 @@ export default function AdminPage() {
     };
 
     const handleSignOut = async () => {
+        // Clear local admin session flag
+        sessionStorage.removeItem('es-admin-auth');
         await supabase.auth.signOut();
         router.replace('/');
     };

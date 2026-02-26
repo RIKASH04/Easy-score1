@@ -44,14 +44,17 @@ export default function AuthPage() {
         setSuccessMsg('Account created! Check your email to confirm, then sign in.');
         setTab('signin');
       } else {
+        // ── ADMIN: bypass Supabase entirely ──
+        // The admin account does not exist in Supabase; we authenticate locally.
+        if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+          sessionStorage.setItem('es-admin-auth', 'true');
+          router.replace('/admin');
+          return;
+        }
+        // ── JUDGES: use Supabase email/password auth ──
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        // Admin check: only email+password combo grants admin access
-        if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-          router.replace('/admin');
-        } else {
-          router.replace('/judge');
-        }
+        router.replace('/judge');
       }
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Something went wrong.');
