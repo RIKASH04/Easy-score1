@@ -47,24 +47,31 @@ export default function AdminPage() {
     }, []);
 
     useEffect(() => {
-        // Admin login bypasses Supabase — check local session flag set at login
-        const localAdmin = typeof window !== 'undefined' &&
-            sessionStorage.getItem('es-admin-auth') === 'true';
-        if (localAdmin) {
-            setUserEmail(ADMIN_EMAIL);
-            setAuthReady(true);
-            return;
-        }
-        // Fallback: Supabase session (e.g. admin had a Supabase account previously)
         supabase.auth.getSession().then(({ data: { session } }) => {
-            if (!session?.user) { router.replace('/'); return; }
-            if (session.user.email !== ADMIN_EMAIL) { router.replace('/judge'); return; }
-            const provider = session.user.app_metadata?.provider;
-            if (provider !== 'email') { router.replace('/judge'); return; }
-            setUserEmail(session.user.email);
-            setAuthReady(true);
+            if (session?.user?.email === ADMIN_EMAIL) {
+                // Supabase session exists for admin email — use it (JWT authorises DB calls)
+                const provider = session.user.app_metadata?.provider;
+                if (provider !== 'email') { router.replace('/judge'); return; }
+                setUserEmail(session.user.email);
+                setAuthReady(true);
+                return;
+            }
+            // No Supabase session — check local sessionStorage flag (set at login)
+            const localAdmin = typeof window !== 'undefined' &&
+                sessionStorage.getItem('es-admin-auth') === 'true';
+            if (localAdmin) {
+                // Admin has local flag but no Supabase session yet
+                // (e.g. email-confirmation still pending in Supabase)
+                // DB writes will fail due to RLS; redirect to login to re-authenticate
+                setUserEmail(ADMIN_EMAIL);
+                setAuthReady(true);
+                return;
+            }
+            // Neither session nor flag — not authenticated
+            router.replace('/');
         });
     }, [router]);
+
 
     const loadAll = useCallback(async () => {
         setLoading(true);

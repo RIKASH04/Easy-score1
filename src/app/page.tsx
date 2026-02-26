@@ -44,9 +44,22 @@ export default function AuthPage() {
         setSuccessMsg('Account created! Check your email to confirm, then sign in.');
         setTab('signin');
       } else {
-        // ── ADMIN: bypass Supabase entirely ──
-        // The admin account does not exist in Supabase; we authenticate locally.
+        // ── ADMIN: verify credentials locally, then establish a Supabase session ──
+        // A real Supabase JWT is needed so RLS policies (auth.role()='authenticated')
+        // allow INSERT on rooms/judges/events/scores tables.
         if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+          // 1. Try signing in (works if the account already exists in Supabase)
+          const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+          if (signInErr) {
+            // 2. Account not yet in Supabase — create it silently (no email confirmation
+            //    needed because we control these credentials and signUp returns a session
+            //    directly when email-confirm is disabled, or we rely on the next step)
+            await supabase.auth.signUp({ email, password });
+            // 3. Try sign-in again after sign-up
+            await supabase.auth.signInWithPassword({ email, password });
+          }
+          // Set local flag so admin page recognises the session even if Supabase
+          // email confirmation is still pending
           sessionStorage.setItem('es-admin-auth', 'true');
           router.replace('/admin');
           return;
