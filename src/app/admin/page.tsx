@@ -138,7 +138,7 @@ export default function AdminPage() {
             let code = '', attempts = 0;
             while (attempts < 10) {
                 const c = generateCode();
-                const { data } = await supabase.from('rooms').select('id').eq('secret_code', c).single();
+                const { data } = await supabase.from('rooms').select('id').eq('secret_code', c).maybeSingle();
                 if (!data) { code = c; break; }
                 attempts++;
             }
@@ -146,13 +146,14 @@ export default function AdminPage() {
             const { error } = await supabase.from('rooms').insert({
                 secret_code: code, judge_count_required: newRoomJudgeCount, created_by: userEmail,
             });
-            if (error) throw error;
+            if (error) throw new Error(`DB error [${error.code}]: ${error.message}`);
             showToast(`✓ Room created! Code: ${code}`, 'success');
         } catch (err: unknown) {
-            showToast(err instanceof Error ? err.message : 'Failed.', 'error');
+            showToast(err instanceof Error ? err.message : JSON.stringify(err), 'error');
         } finally {
             setCreating(false);
         }
+
     };
 
     const copyCode = (code: string) => {
