@@ -48,18 +48,17 @@ export default function AuthPage() {
         // A real Supabase JWT is needed so RLS policies (auth.role()='authenticated')
         // allow INSERT on rooms/judges/events/scores tables.
         if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-          // 1. Try signing in (works if the account already exists in Supabase)
-          const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-          if (signInErr) {
-            // 2. Account not yet in Supabase — create it silently (no email confirmation
-            //    needed because we control these credentials and signUp returns a session
-            //    directly when email-confirm is disabled, or we rely on the next step)
+          // 1. Try signing in
+          const { data: { session }, error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+          
+          if (!session) {
+            // 2. Account not yet in Supabase — create it silently
             await supabase.auth.signUp({ email, password });
             // 3. Try sign-in again after sign-up
-            await supabase.auth.signInWithPassword({ email, password });
+            const { data: { session: s2 }, error: e2 } = await supabase.auth.signInWithPassword({ email, password });
+            if (!s2) throw new Error(e2?.message || 'Could not establish admin session.');
           }
-          // Set local flag so admin page recognises the session even if Supabase
-          // email confirmation is still pending
+          
           sessionStorage.setItem('es-admin-auth', 'true');
           router.replace('/admin');
           return;
@@ -81,7 +80,7 @@ export default function AuthPage() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin}/auth/callback`,
+        redirectTo: `${window.location.origin}/auth/callback`,
         queryParams: { access_type: 'offline', prompt: 'select_account' },
       },
     });

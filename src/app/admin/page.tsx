@@ -37,6 +37,8 @@ export default function AdminPage() {
     const [toasts, setToasts] = useState<Toast[]>([]);
     const [roomTab, setRoomTab] = useState<'overview' | 'scores'>('overview');
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [confirmDeleteRoom, setConfirmDeleteRoom] = useState<string | null>(null);
+    const [confirmRemoveJudge, setConfirmRemoveJudge] = useState<{ roomId: string; judgeId: string; email: string } | null>(null);
     const roomsRef = useRef<RoomWithDetails[]>([]);
     roomsRef.current = rooms;
 
@@ -104,7 +106,13 @@ export default function AdminPage() {
                 })),
             })));
         } catch (err) {
-            showToast('Failed to load data.', 'error');
+            const message = err instanceof Error ? err.message : 'Failed to load data.';
+            if (message.includes('401') || message.includes('JWT')) {
+                showToast('Session expired or missing keys. Please re-login.', 'error');
+                router.replace('/');
+            } else {
+                showToast(message, 'error');
+            }
             console.error(err);
         } finally {
             setLoading(false);
@@ -154,6 +162,33 @@ export default function AdminPage() {
             setCreating(false);
         }
 
+    };
+
+    const handleDeleteRoom = async (id: string) => {
+        try {
+            const { error } = await supabase.from('rooms').delete().eq('id', id);
+            if (error) throw error;
+            if (selectedRoomId === id) setSelectedRoomId(null);
+            showToast('Room deleted successfully.', 'success');
+        } catch (err) {
+            console.error(err);
+            showToast('Failed to delete room.', 'error');
+        } finally {
+            setConfirmDeleteRoom(null);
+        }
+    };
+
+    const handleRemoveJudge = async (roomId: string, judgeId: string) => {
+        try {
+            const { error } = await supabase.from('judges').delete().eq('id', judgeId);
+            if (error) throw error;
+            showToast('Judge removed from room.', 'success');
+        } catch (err) {
+            console.error(err);
+            showToast('Failed to remove judge.', 'error');
+        } finally {
+            setConfirmRemoveJudge(null);
+        }
     };
 
     const copyCode = (code: string) => {
@@ -395,8 +430,15 @@ export default function AdminPage() {
                                                         <td><strong>{room.events.reduce((s, e) => s + e.scores.length, 0)}</strong></td>
                                                         <td className="col-muted">{new Date(room.created_at).toLocaleDateString()}</td>
                                                         <td>
-                                                            <button className="btn btn-ghost btn-sm"
-                                                                onClick={() => selectRoom(room.id)}>View →</button>
+                                                            <div className="flex gap-2">
+                                                                <button className="btn btn-ghost btn-sm"
+                                                                    onClick={() => selectRoom(room.id)}>View →</button>
+                                                                <button className="btn btn-ghost btn-sm text-danger"
+                                                                    onClick={() => setConfirmDeleteRoom(room.id)}
+                                                                    title="Delete Room">
+                                                                    🗑️
+                                                                </button>
+                                                            </div>
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -478,13 +520,21 @@ export default function AdminPage() {
                                                 ) : (
                                                     <div className="table-wrap">
                                                         <table className="table">
-                                                            <thead><tr><th>#</th><th>Email</th><th>Joined</th></tr></thead>
+                                                            <thead><tr><th>#</th><th>Email</th><th>Joined</th><th>Actions</th></tr></thead>
                                                             <tbody>
                                                                 {selectedRoom.judges.map((j, i) => (
                                                                     <tr key={j.id}>
                                                                         <td><strong>{i + 1}</strong></td>
                                                                         <td><strong>{j.email}</strong></td>
                                                                         <td className="col-muted">{new Date(j.joined_at).toLocaleString()}</td>
+                                                                        <td>
+                                                                            <button
+                                                                                className="btn btn-ghost btn-sm text-danger"
+                                                                                onClick={() => setConfirmRemoveJudge({ roomId: selectedRoom.id, judgeId: j.id, email: j.email })}
+                                                                            >
+                                                                                Remove
+                                                                            </button>
+                                                                        </td>
                                                                     </tr>
                                                                 ))}
                                                             </tbody>
@@ -585,6 +635,59 @@ export default function AdminPage() {
                     ))}
                 </AnimatePresence>
             </div>
+
+            {/* Confirmation Modals */}
+            <AnimatePresence>
+                {confirmDeleteRoom && (
+                    <div className="sidebar-overlay" style={{ zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+                        <motion.div 
+                            className="card" 
+                            style={{ maxWidth: 400, width: '100%' }}
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                        >
+                            <div className="card-header">
+                                <h3>Delete Room?</h3>
+                            </div>
+                            <div className="card-body">
+                                <p style={{ fontSize: '0.9rem', lineHeight: 1.5 }}>
+                                    Are you sure you want to delete this room? This action cannot be undone and will remove all related judges, events, and scores.
+                                </p>
+                                <div className="flex gap-3 mt-4">
+                                    <button className="btn btn-secondary flex-1" onClick={() => setConfirmDeleteRoom(null)}>Cancel</button>
+                                    <button className="btn btn-primary flex-1 bg-danger" onClick={() => handleDeleteRoom(confirmDeleteRoom)}>Delete</button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+
+                {confirmRemoveJudge && (
+                    <div className="sidebar-overlay" style={{ zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+                        <motion.div 
+                            className="card" 
+                            style={{ maxWidth: 400, width: '100%' }}
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                        >
+                            <div className="card-header">
+                                <h3>Remove Judge?</h3>
+                            </div>
+                            <div className="card-body">
+                                <p style={{ fontSize: '0.9rem', lineHeight: 1.5 }}>
+                                    Are you sure you want to remove <strong>{confirmRemoveJudge.email}</strong> from this room? This will not delete their account.
+                                </p>
+                                <div className="flex gap-3 mt-4">
+                                    <button className="btn btn-secondary flex-1" onClick={() => setConfirmRemoveJudge(null)}>Cancel</button>
+                                    <button className="btn btn-primary flex-1 bg-danger" onClick={() => handleRemoveJudge(confirmRemoveJudge.roomId, confirmRemoveJudge.judgeId)}>Remove</button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

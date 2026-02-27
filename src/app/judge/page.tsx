@@ -46,6 +46,7 @@ export default function JudgePage() {
     const [submitting, setSubmitting] = useState(false);
     const [existingScores, setExistingScores] = useState<Score[]>([]);
     const [toasts, setToasts] = useState<Toast[]>([]);
+    const [confirmLeaveRoom, setConfirmLeaveRoom] = useState(false);
 
     const showToast = useCallback((msg: string, type: Toast['type'] = 'info') => {
         const id = ++_tid;
@@ -65,15 +66,26 @@ export default function JudgePage() {
     useEffect(() => {
         if (!authReady || !userEmail) return;
         (async () => {
-            const { data } = await supabase.from('judges')
-                .select('room_id').eq('email', userEmail).limit(1).single();
-            if (data?.room_id) {
-                const { data: room } = await supabase.from('rooms').select('*').eq('id', data.room_id).single();
-                if (room) {
-                    setJoinedRoom(room as Room);
-                    setStep('events');
-                    loadEvents(room.id);
+            try {
+                const { data, error } = await supabase.from('judges')
+                    .select('room_id').eq('email', userEmail).limit(1).single();
+                
+                if (error && (error.code === 'PGRST301' || error.message.includes('JWT') || error.message.includes('401'))) {
+                    showToast('Session expired. Please re-login.', 'error');
+                    router.replace('/');
+                    return;
                 }
+
+                if (data?.room_id) {
+                    const { data: room } = await supabase.from('rooms').select('*').eq('id', data.room_id).single();
+                    if (room) {
+                        setJoinedRoom(room as Room);
+                        setStep('events');
+                        loadEvents(room.id);
+                    }
+                }
+            } catch (err) {
+                console.error('Judge check error:', err);
             }
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,6 +231,23 @@ export default function JudgePage() {
         router.replace('/');
     };
 
+    const handleLeaveRoom = async () => {
+        if (!userEmail) return;
+        try {
+            const { error } = await supabase.from('judges').delete().eq('email', userEmail);
+            if (error) throw error;
+            setJoinedRoom(null);
+            setStep('join');
+            setCodeInput('');
+            showToast('You have left the room.', 'success');
+        } catch (err) {
+            console.error(err);
+            showToast('Failed to leave the room.', 'error');
+        } finally {
+            setConfirmLeaveRoom(false);
+        }
+    };
+
     const goEvents = () => {
         setStep('events');
         if (joinedRoom) loadEvents(joinedRoom.id);
@@ -273,6 +302,16 @@ export default function JudgePage() {
                 <div className="flex items-c gap-3">
                     <span className="badge badge-blue hide-sm">Judge</span>
                     <span className="text-xs col-muted hide-sm truncate" style={{ maxWidth: 160 }}>{userEmail}</span>
+                    {joinedRoom && step !== 'join' && (
+                        <motion.button
+                            id="btn-leave-room"
+                            onClick={() => setConfirmLeaveRoom(true)}
+                            className="btn btn-ghost btn-sm text-danger"
+                            whileTap={{ scale: 0.96 }}
+                        >
+                            Leave Room
+                        </motion.button>
+                    )}
                     <motion.button
                         id="btn-signout-judge" onClick={handleSignOut}
                         className="btn btn-secondary btn-sm" whileTap={{ scale: 0.96 }}>
@@ -728,6 +767,34 @@ export default function JudgePage() {
                     ))}
                 </AnimatePresence>
             </div>
+
+            {/* Confirmation Modals */}
+            <AnimatePresence>
+                {confirmLeaveRoom && (
+                    <div className="sidebar-overlay" style={{ zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+                        <motion.div 
+                            className="card" 
+                            style={{ maxWidth: 400, width: '100%' }}
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                        >
+                            <div className="card-header">
+                                <h3>Leave Room?</h3>
+                            </div>
+                            <div className="card-body">
+                                <p style={{ fontSize: '0.9rem', lineHeight: 1.5 }}>
+                                    Are you sure you want to leave this room? You will be able to join another room using a different code, but your past scores for this room will remain recorded.
+                                </p>
+                                <div className="flex gap-3 mt-4">
+                                    <button className="btn btn-secondary flex-1" onClick={() => setConfirmLeaveRoom(false)}>Cancel</button>
+                                    <button className="btn btn-primary flex-1 bg-danger" onClick={handleLeaveRoom}>Leave</button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }
