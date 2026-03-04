@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, ADMIN_EMAIL } from '@/lib/supabase';
+import { supabase, SUPER_ADMIN_EMAIL } from '@/lib/supabase';
 import type { Room, Event, Score } from '@/types';
 import Footer from '@/components/Footer';
 
@@ -55,12 +55,37 @@ export default function JudgePage() {
     }, []);
 
     useEffect(() => {
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            if (!session?.user) { router.replace('/'); return; }
-            if (session.user.email === ADMIN_EMAIL) { router.replace('/admin'); return; }
-            setUserEmail(session.user.email!);
-            setAuthReady(true);
-        });
+        let cancelled = false;
+        supabase.auth.getSession()
+            .then(async ({ data: { session } }) => {
+                if (cancelled) return;
+                if (!session?.user?.email) {
+                    router.replace('/');
+                    return;
+                }
+                const email = session.user.email;
+                if (email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+                    router.replace('/super-admin');
+                    return;
+                }
+                const { data: inst, error } = await supabase
+                    .from('institutions')
+                    .select('id')
+                    .eq('admin_email', email.toLowerCase())
+                    .maybeSingle();
+                if (cancelled) return;
+                if (error) {
+                    console.error('Judge auth check:', error);
+                }
+                if (inst) {
+                    router.replace('/admin');
+                    return;
+                }
+                setUserEmail(email);
+                setAuthReady(true);
+            })
+            .catch(() => { if (!cancelled) router.replace('/'); });
+        return () => { cancelled = true; };
     }, [router]);
 
     useEffect(() => {
@@ -132,13 +157,18 @@ export default function JudgePage() {
                 .eq('secret_code', code).single();
             if (rErr || !room) throw new Error('Room not found. Check the code.');
 
-            const { data: current } = await supabase.from('judges').select('id').eq('room_id', room.id);
+            // Check if already in this room
             const { data: alreadyIn } = await supabase.from('judges').select('id')
                 .eq('room_id', room.id).eq('email', userEmail).single();
 
             if (!alreadyIn) {
+                // To join a new room, first leave any current room (clean slate)
+                await supabase.from('judges').delete().eq('email', userEmail);
+                
+                const { data: current } = await supabase.from('judges').select('id').eq('room_id', room.id);
                 if ((current?.length || 0) >= room.judge_count_required)
                     throw new Error(`Room is full (max ${room.judge_count_required} judges).`);
+                
                 const { error: jErr } = await supabase.from('judges').insert({ email: userEmail, room_id: room.id });
                 if (jErr) throw jErr;
             }
@@ -165,9 +195,12 @@ export default function JudgePage() {
         setCreatingEvent(true);
         try {
             const { data: newEvent, error } = await supabase.from('events').insert({
-                room_id: joinedRoom.id, event_name: eventName.trim(),
+                room_id: joinedRoom.id, 
+                institution_id: joinedRoom.institution_id,
+                event_name: eventName.trim(),
                 category: resolvedCategory,
-                participant_count: participantCount, created_by: userEmail,
+                participant_count: participantCount, 
+                created_by: userEmail,
             }).select().single();
             if (error) throw error;
 
@@ -199,7 +232,7 @@ export default function JudgePage() {
     };
 
     const handleSubmit = async () => {
-        if (!scoringEvent) return;
+        if (!scoringEvent || !joinedRoom) return;
         const nums = Array.from({ length: scoringEvent.participant_count }, (_, i) => i + 1);
         for (const num of nums) {
             const v = scores[num];
@@ -211,8 +244,11 @@ export default function JudgePage() {
         try {
             const { error } = await supabase.from('scores').upsert(
                 nums.map((num) => ({
-                    event_id: scoringEvent.id, judge_email: userEmail,
-                    participant_number: num, score: Number(scores[num]),
+                    event_id: scoringEvent.id, 
+                    institution_id: joinedRoom.institution_id,
+                    judge_email: userEmail,
+                    participant_number: num, 
+                    score: Number(scores[num]),
                 })),
                 { onConflict: 'event_id,judge_email,participant_number' }
             );

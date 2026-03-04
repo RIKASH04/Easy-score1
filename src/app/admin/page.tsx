@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, ADMIN_EMAIL } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import type { Room, Judge, Event, Score } from '@/types';
 import Footer from '@/components/Footer';
 
@@ -29,6 +29,7 @@ export default function AdminPage() {
     const router = useRouter();
     const [authReady, setAuthReady] = useState(false);
     const [userEmail, setUserEmail] = useState('');
+    const [institutionId, setInstitutionId] = useState<string | null>(null);
     const [rooms, setRooms] = useState<RoomWithDetails[]>([]);
     const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
@@ -49,44 +50,58 @@ export default function AdminPage() {
     }, []);
 
     useEffect(() => {
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            if (session?.user?.email === ADMIN_EMAIL) {
-                // Supabase session exists for admin email — use it (JWT authorises DB calls)
-                const provider = session.user.app_metadata?.provider;
-                if (provider !== 'email') { router.replace('/judge'); return; }
-                setUserEmail(session.user.email);
-                setAuthReady(true);
-                return;
-            }
-            // No Supabase session — check local sessionStorage flag (set at login)
-            const localAdmin = typeof window !== 'undefined' &&
-                sessionStorage.getItem('es-admin-auth') === 'true';
-            if (localAdmin) {
-                // Admin has local flag but no Supabase session yet
-                // (e.g. email-confirmation still pending in Supabase)
-                // DB writes will fail due to RLS; redirect to login to re-authenticate
-                setUserEmail(ADMIN_EMAIL);
-                setAuthReady(true);
-                return;
-            }
-            // Neither session nor flag — not authenticated
-            router.replace('/');
-        });
+        let cancelled = false;
+        supabase.auth.getSession()
+            .then(async ({ data: { session } }) => {
+                if (cancelled) return;
+                if (!session?.user?.email) {
+                    router.replace('/');
+                    return;
+                }
+                const email = session.user.email;
+                const emailLower = email.toLowerCase();
+                const { data: inst, error } = await supabase
+                    .from('institutions')
+                    .select('id, is_active')
+                    .eq('admin_email', emailLower)
+                    .maybeSingle();
+                if (cancelled) return;
+                if (error) {
+                    console.error('Admin auth check failed:', error);
+                    router.replace('/');
+                    return;
+                }
+                if (inst?.is_active) {
+                    setUserEmail(email);
+                    setInstitutionId(inst.id);
+                    setAuthReady(true);
+                } else {
+                    router.replace('/');
+                }
+            })
+            .catch(() => { if (!cancelled) router.replace('/'); });
+        return () => { cancelled = true; };
     }, [router]);
 
 
     const loadAll = useCallback(async () => {
+        if (!institutionId) return;
         setLoading(true);
         try {
             const { data: rawRooms, error: rErr } = await supabase
-                .from('rooms').select('*').order('created_at', { ascending: false });
+                .from('rooms').select('*')
+                .eq('institution_id', institutionId)
+                .order('created_at', { ascending: false });
             if (rErr) throw rErr;
             if (!rawRooms || rawRooms.length === 0) { setRooms([]); return; }
 
             const roomIds = (rawRooms as Room[]).map((r) => r.id);
             const [judgesRes, eventsRes] = await Promise.all([
                 supabase.from('judges').select('*').in('room_id', roomIds),
-                supabase.from('events').select('*').in('room_id', roomIds).order('created_at', { ascending: false }),
+                supabase.from('events').select('*')
+                    .in('room_id', roomIds)
+                    .eq('institution_id', institutionId)
+                    .order('created_at', { ascending: false }),
             ]);
             const allJudges = (judgesRes.data as Judge[]) || [];
             const allEvents = (eventsRes.data as Event[]) || [];
@@ -94,7 +109,10 @@ export default function AdminPage() {
             let allScores: Score[] = [];
             if (allEvents.length > 0) {
                 const eventIds = allEvents.map((e) => e.id);
-                const { data: sd } = await supabase.from('scores').select('*').in('event_id', eventIds).order('created_at', { ascending: true });
+                const { data: sd } = await supabase.from('scores').select('*')
+                    .in('event_id', eventIds)
+                    .eq('institution_id', institutionId)
+                    .order('created_at', { ascending: true });
                 allScores = (sd as Score[]) || [];
             }
 
@@ -117,23 +135,23 @@ export default function AdminPage() {
         } finally {
             setLoading(false);
         }
-    }, [showToast]);
+    }, [showToast, institutionId, router]);
 
     useEffect(() => {
-        if (!authReady) return;
+        if (!authReady || !institutionId) return;
         loadAll();
-    }, [authReady, loadAll]);
+    }, [authReady, loadAll, institutionId]);
 
     useEffect(() => {
-        if (!authReady) return;
-        const ch = supabase.channel('admin-rt')
+        if (!authReady || !institutionId) return;
+        const ch = supabase.channel(`admin-rt-${institutionId}`)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'judges' }, loadAll)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, loadAll)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'scores' }, loadAll)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, loadAll)
             .subscribe();
         return () => { supabase.removeChannel(ch); };
-    }, [authReady, loadAll]);
+    }, [authReady, loadAll, institutionId]);
 
     const generateCode = () => {
         const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -141,6 +159,7 @@ export default function AdminPage() {
     };
 
     const handleCreateRoom = async () => {
+        if (!institutionId) return;
         setCreating(true);
         try {
             let code = '', attempts = 0;
@@ -152,7 +171,10 @@ export default function AdminPage() {
             }
             if (!code) throw new Error('Could not generate a unique code.');
             const { error } = await supabase.from('rooms').insert({
-                secret_code: code, judge_count_required: newRoomJudgeCount, created_by: userEmail,
+                secret_code: code, 
+                judge_count_required: newRoomJudgeCount, 
+                created_by: userEmail,
+                institution_id: institutionId
             });
             if (error) throw new Error(`DB error [${error.code}]: ${error.message}`);
             showToast(`✓ Room created! Code: ${code}`, 'success');
@@ -197,8 +219,6 @@ export default function AdminPage() {
     };
 
     const handleSignOut = async () => {
-        // Clear local admin session flag
-        sessionStorage.removeItem('es-admin-auth');
         await supabase.auth.signOut();
         router.replace('/');
     };

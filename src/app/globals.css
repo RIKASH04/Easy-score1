@@ -111,6 +111,34 @@ body {
   line-height: 1.55;
 }
 
+@media (max-width: 1440px) {
+  :root {
+    --sidebar-w: 248px;
+    --header-h: 56px;
+  }
+  body {
+    font-size: 13px;
+  }
+  .main-body {
+    padding: clamp(16px, 3vw, 28px) clamp(12px, 3vw, 28px);
+    max-width: 1120px;
+  }
+}
+
+@media (max-width: 1280px) {
+  :root {
+    --sidebar-w: 232px;
+    --header-h: 52px;
+  }
+  body {
+    font-size: 12.5px;
+  }
+  .main-body {
+    padding: clamp(14px, 3vw, 24px) clamp(10px, 3vw, 24px);
+    max-width: 1040px;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
@@ -350,6 +378,23 @@ h4 {
   flex-direction: column;
   min-height: 100vh;
   transition: margin-left var(--ease);
+}
+
+/* Layout variant without sidebar (Super Admin) */
+.page-layout.no-sidebar {
+  flex-direction: column;
+}
+.no-sidebar .main-content {
+  margin-left: 0;
+  width: 100%;
+}
+.no-sidebar .sidebar {
+  display: none;
+}
+.no-sidebar .main-header {
+  left: 0;
+  width: 100%;
+  flex: 0 0 auto;
 }
 
 .main-header {

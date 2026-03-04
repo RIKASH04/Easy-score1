@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { handleUserRedirect } from '@/lib/auth-utils';
 
 export default function AuthCallbackPage() {
     const router = useRouter();
@@ -18,24 +19,17 @@ export default function AuthCallbackPage() {
             return;
         }
 
-        // The Supabase browser client (with flowType:'pkce' + detectSessionInUrl:true)
-        // automatically detects the ?code= parameter, reads the code_verifier from
-        // localStorage, and exchanges it for a session.
-        // We just need to wait for the SIGNED_IN event and redirect.
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             (event, session) => {
-                if (event === 'SIGNED_IN' && session?.user) {
-                    // Google OAuth users always go to Judge dashboard
-                    router.replace('/judge');
+                if (event === 'SIGNED_IN' && session?.user?.email) {
+                    handleUserRedirect(session.user.email, router);
                 }
             }
         );
 
-        // Also handle the case where the session is set before the listener fires
         supabase.auth.getSession().then(({ data: { session } }) => {
-            if (session?.user) {
-                // Google OAuth users always go to Judge dashboard
-                router.replace('/judge');
+            if (session?.user?.email) {
+                handleUserRedirect(session.user.email, router);
             }
         });
 

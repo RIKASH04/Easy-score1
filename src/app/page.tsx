@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase, ADMIN_EMAIL, ADMIN_PASSWORD } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
+import { handleUserRedirect } from '@/lib/auth-utils';
 
 export default function AuthPage() {
   const router = useRouter();
@@ -19,20 +20,15 @@ export default function AuthPage() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user?.email) redirectUser(session.user.email);
+      if (session?.user?.email) handleUserRedirect(session.user.email, router, setFormError).then(() => setLoading(false));
       else setLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_e, session) => { if (session?.user?.email) redirectUser(session.user.email); }
+      (_e, session) => { if (session?.user?.email) handleUserRedirect(session.user.email, router, setFormError); }
     );
     return () => subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Session-based redirect: only used on page load to handle already-logged-in users.
-  // For email/password admin login, the explicit check in handleEmailAuth is used instead.
-  const redirectUser = (email: string) =>
-    email === ADMIN_EMAIL ? router.replace('/admin') : router.replace('/judge');
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,29 +40,9 @@ export default function AuthPage() {
         setSuccessMsg('Account created! Check your email to confirm, then sign in.');
         setTab('signin');
       } else {
-        // ── ADMIN: verify credentials locally, then establish a Supabase session ──
-        // A real Supabase JWT is needed so RLS policies (auth.role()='authenticated')
-        // allow INSERT on rooms/judges/events/scores tables.
-        if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-          // 1. Try signing in
-          const { data: { session }, error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-          
-          if (!session) {
-            // 2. Account not yet in Supabase — create it silently
-            await supabase.auth.signUp({ email, password });
-            // 3. Try sign-in again after sign-up
-            const { data: { session: s2 }, error: e2 } = await supabase.auth.signInWithPassword({ email, password });
-            if (!s2) throw new Error(e2?.message || 'Could not establish admin session.');
-          }
-          
-          sessionStorage.setItem('es-admin-auth', 'true');
-          router.replace('/admin');
-          return;
-        }
-        // ── JUDGES: use Supabase email/password auth ──
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        router.replace('/judge');
+        // redirection is handled by onAuthStateChange
       }
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : 'Something went wrong.');
