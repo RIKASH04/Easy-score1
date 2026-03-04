@@ -29,6 +29,7 @@ export default function AdminPage() {
     const router = useRouter();
     const [authReady, setAuthReady] = useState(false);
     const [userEmail, setUserEmail] = useState('');
+    const [institutionName, setInstitutionName] = useState('');
     const [institutionId, setInstitutionId] = useState<string | null>(null);
     const [rooms, setRooms] = useState<RoomWithDetails[]>([]);
     const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
@@ -62,7 +63,7 @@ export default function AdminPage() {
                 const emailLower = email.toLowerCase();
                 const { data: inst, error } = await supabase
                     .from('institutions')
-                    .select('id, is_active')
+                    .select('id, is_active, name')
                     .eq('admin_email', emailLower)
                     .maybeSingle();
                 if (cancelled) return;
@@ -73,6 +74,7 @@ export default function AdminPage() {
                 }
                 if (inst?.is_active) {
                     setUserEmail(email);
+                    setInstitutionName(inst.name ?? '');
                     setInstitutionId(inst.id);
                     setAuthReady(true);
                 } else {
@@ -262,7 +264,14 @@ export default function AdminPage() {
                 {/* Gradient header */}
                 <div className="sidebar-header">
                     <div className="sidebar-logo-icon">⚡</div>
-                    <div className="sidebar-logo-text">Easy<span>Score</span></div>
+                    <div>
+                        <div className="sidebar-logo-text">Easy<span>Score</span></div>
+                        {institutionName && (
+                            <div style={{ fontSize: '0.7rem', opacity: 0.9, marginTop: 2, fontWeight: 600 }}>
+                                {institutionName}
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <nav className="sidebar-nav">
@@ -329,7 +338,7 @@ export default function AdminPage() {
                         </button>
                         <div>
                             <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
-                                {selectedRoom ? selectedRoom.secret_code : 'Admin Dashboard'}
+                                {selectedRoom ? selectedRoom.secret_code : (institutionName || 'Admin Dashboard')}
                             </h3>
                             <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                                 {selectedRoom ? `${selectedRoom.judges.length} judge(s) joined` : 'Manage rooms and monitor scoring'}

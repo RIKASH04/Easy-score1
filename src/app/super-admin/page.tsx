@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase, SUPER_ADMIN_EMAIL } from '@/lib/supabase';
-import type { Institution } from '@/types';
+import type { Institution, Room, Judge, Event, Score } from '@/types';
 import Footer from '@/components/Footer';
 
 interface Toast { id: number; msg: string; type: 'success' | 'error' | 'info'; }
+interface EventWithScores extends Event { scores: Score[]; }
+interface RoomWithDetails extends Room { judges: Judge[]; events: EventWithScores[]; }
 let _tid = 0;
 
 export default function SuperAdminPage() {
@@ -22,6 +24,11 @@ export default function SuperAdminPage() {
     const [newName, setNewName] = useState('');
     const [newEmail, setNewEmail] = useState('');
     const [creating, setCreating] = useState(false);
+
+    // Expand institution to see full details (rooms, judges, events, scores)
+    const [expandedInstId, setExpandedInstId] = useState<string | null>(null);
+    const [instDetails, setInstDetails] = useState<Record<string, RoomWithDetails[]>>({});
+    const [loadingDetailsId, setLoadingDetailsId] = useState<string | null>(null);
 
     const showToast = useCallback((msg: string, type: Toast['type'] = 'info') => {
         const id = ++_tid;
@@ -59,6 +66,64 @@ export default function SuperAdminPage() {
     useEffect(() => {
         if (authReady) loadInstitutions();
     }, [authReady, loadInstitutions]);
+
+    const loadInstDetails = useCallback(async (instId: string) => {
+        if (instDetails[instId]) {
+            setExpandedInstId((id) => (id === instId ? null : instId));
+            return;
+        }
+        setLoadingDetailsId(instId);
+        try {
+            const { data: rawRooms, error: rErr } = await supabase
+                .from('rooms')
+                .select('*')
+                .eq('institution_id', instId)
+                .order('created_at', { ascending: false });
+            if (rErr) throw rErr;
+            if (!rawRooms?.length) {
+                setInstDetails((d) => ({ ...d, [instId]: [] }));
+                setExpandedInstId(instId);
+                setLoadingDetailsId(null);
+                return;
+            }
+            const roomIds = (rawRooms as Room[]).map((r) => r.id);
+            const [judgesRes, eventsRes] = await Promise.all([
+                supabase.from('judges').select('*').in('room_id', roomIds),
+                supabase.from('events')
+                    .select('*')
+                    .in('room_id', roomIds)
+                    .eq('institution_id', instId)
+                    .order('created_at', { ascending: false }),
+            ]);
+            const allJudges = (judgesRes.data as Judge[]) || [];
+            const allEvents = (eventsRes.data as Event[]) || [];
+            let allScores: Score[] = [];
+            if (allEvents.length > 0) {
+                const eventIds = allEvents.map((e) => e.id);
+                const { data: sd } = await supabase
+                    .from('scores')
+                    .select('*')
+                    .in('event_id', eventIds)
+                    .eq('institution_id', instId)
+                    .order('created_at', { ascending: true });
+                allScores = (sd as Score[]) || [];
+            }
+            const roomsWithDetails: RoomWithDetails[] = (rawRooms as Room[]).map((room) => ({
+                ...room,
+                judges: allJudges.filter((j) => j.room_id === room.id),
+                events: allEvents.filter((e) => e.room_id === room.id).map((ev) => ({
+                    ...ev,
+                    scores: allScores.filter((s) => s.event_id === ev.id),
+                })),
+            }));
+            setInstDetails((d) => ({ ...d, [instId]: roomsWithDetails }));
+            setExpandedInstId(instId);
+        } catch (err) {
+            showToast(err instanceof Error ? err.message : 'Failed to load institution details', 'error');
+        } finally {
+            setLoadingDetailsId(null);
+        }
+    }, [instDetails, showToast]);
 
     const handleCreateInstitution = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -220,32 +285,57 @@ export default function SuperAdminPage() {
                                 </thead>
                                 <tbody>
                                     {institutions.map((inst) => (
-                                        <tr key={inst.id}>
-                                            <td style={{ fontWeight: 600 }}>{inst.name}</td>
-                                            <td>{inst.admin_email}</td>
-                                            <td>
-                                                <span className={`badge ${inst.is_active ? 'badge-green' : 'badge-red'}`}>
-                                                    {inst.is_active ? 'Active' : 'Inactive'}
-                                                </span>
-                                            </td>
-                                            <td className="col-muted">{new Date(inst.created_at).toLocaleDateString()}</td>
-                                            <td>
-                                                <div className="flex gap-2">
-                                                    <button 
-                                                        className={`btn btn-sm ${inst.is_active ? 'btn-secondary' : 'btn-primary'}`}
-                                                        onClick={() => toggleStatus(inst.id, inst.is_active)}
+                                        <React.Fragment key={inst.id}>
+                                            <tr>
+                                                <td style={{ fontWeight: 600 }}>{inst.name}</td>
+                                                <td>{inst.admin_email}</td>
+                                                <td>
+                                                    <span className={`badge ${inst.is_active ? 'badge-green' : 'badge-red'}`}>
+                                                        {inst.is_active ? 'Active' : 'Inactive'}
+                                                    </span>
+                                                </td>
+                                                <td className="col-muted">{new Date(inst.created_at).toLocaleDateString()}</td>
+                                                <td>
+                                                    <div className="flex gap-2 flex-wrap">
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-ghost btn-sm"
+                                                            onClick={() => loadInstDetails(inst.id)}
+                                                            disabled={loadingDetailsId === inst.id}
+                                                        >
+                                                            {loadingDetailsId === inst.id ? '…' : expandedInstId === inst.id ? '▼ Hide details' : '▶ View details'}
+                                                        </button>
+                                                        <button 
+                                                            className={`btn btn-sm ${inst.is_active ? 'btn-secondary' : 'btn-primary'}`}
+                                                            onClick={() => toggleStatus(inst.id, inst.is_active)}
+                                                        >
+                                                            {inst.is_active ? 'Deactivate' : 'Activate'}
+                                                        </button>
+                                                        <button 
+                                                            className="btn btn-ghost btn-sm text-danger"
+                                                            onClick={() => handleDelete(inst.id)}
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <AnimatePresence>
+                                                {expandedInstId === inst.id && (
+                                                    <motion.tr
+                                                        key={`${inst.id}-detail`}
+                                                        initial={{ opacity: 0, height: 0 }}
+                                                        animate={{ opacity: 1, height: 'auto' }}
+                                                        exit={{ opacity: 0, height: 0 }}
+                                                        transition={{ duration: 0.25 }}
                                                     >
-                                                        {inst.is_active ? 'Deactivate' : 'Activate'}
-                                                    </button>
-                                                    <button 
-                                                        className="btn btn-ghost btn-sm text-danger"
-                                                        onClick={() => handleDelete(inst.id)}
-                                                    >
-                                                        Delete
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
+                                                        <td colSpan={5} style={{ padding: 0, borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>
+                                                            <InstDetailPanel inst={inst} rooms={instDetails[inst.id] ?? []} />
+                                                        </td>
+                                                    </motion.tr>
+                                                )}
+                                            </AnimatePresence>
+                                        </React.Fragment>
                                     ))}
                                     {institutions.length === 0 && (
                                         <tr>
@@ -278,6 +368,71 @@ export default function SuperAdminPage() {
                     ))}
                 </AnimatePresence>
             </div>
+        </div>
+    );
+}
+
+function InstDetailPanel({ inst, rooms }: { inst: Institution; rooms: RoomWithDetails[] }) {
+    const totalJudges = rooms.reduce((s, r) => s + r.judges.length, 0);
+    const totalEvents = rooms.reduce((s, r) => s + r.events.length, 0);
+    const totalScores = rooms.reduce((s, r) => s + r.events.reduce((es, ev) => es + ev.scores.length, 0), 0);
+
+    return (
+        <div style={{ padding: 20, background: 'var(--bg-muted)', borderTop: '1px solid var(--border)' }}>
+            <div style={{ marginBottom: 16, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                <span><strong>{rooms.length}</strong> room(s)</span>
+                <span><strong>{totalJudges}</strong> judge(s)</span>
+                <span><strong>{totalEvents}</strong> event(s)</span>
+                <span><strong>{totalScores}</strong> score(s)</span>
+            </div>
+            {rooms.length === 0 ? (
+                <p className="col-muted" style={{ fontSize: '0.875rem' }}>No rooms yet for this institution.</p>
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {rooms.map((room) => (
+                        <div
+                            key={room.id}
+                            style={{
+                                background: 'white',
+                                border: '1px solid var(--border)',
+                                borderRadius: 'var(--r-md)',
+                                padding: 16,
+                                boxShadow: 'var(--shadow-xs)',
+                            }}
+                        >
+                            <div style={{ fontWeight: 700, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontFamily: 'monospace', fontSize: '1rem' }}>Room: {room.secret_code}</span>
+                                <span className="badge badge-gray">
+                                    {room.judges.length}/{room.judge_count_required} judges
+                                </span>
+                            </div>
+                            {room.judges.length > 0 && (
+                                <div style={{ marginBottom: 10 }}>
+                                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 4 }}>Judges</div>
+                                    <div style={{ fontSize: '0.8rem' }}>{room.judges.map((j) => j.email).join(', ')}</div>
+                                </div>
+                            )}
+                            {room.events.length > 0 && (
+                                <div>
+                                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>Events</div>
+                                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.85rem' }}>
+                                        {room.events.map((ev) => (
+                                            <li key={ev.id}>
+                                                <strong>{ev.event_name}</strong>
+                                                {ev.category && ` · ${ev.category}`}
+                                                {' '}— {ev.participant_count} participants, {ev.scores.length} score entries
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                            {room.judges.length === 0 && room.events.length === 0 && (
+                                <p className="col-muted" style={{ fontSize: '0.8rem', margin: 0 }}>No judges or events yet.</p>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
